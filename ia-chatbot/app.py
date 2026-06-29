@@ -24,8 +24,12 @@ async def get_agent():
 
 
 async def _reply(user_text: str, say) -> None:
-    agent = await get_agent()
-    response = await run_agent(agent, user_text)
+    try:
+        agent = await get_agent()
+        response = await run_agent(agent, user_text)
+    except Exception as exc:
+        logger.exception("Error respondiendo en Slack: %s", exc)
+        response = "Ha ocurrido un error interno. Inténtalo de nuevo."
     await say(response)
 
 
