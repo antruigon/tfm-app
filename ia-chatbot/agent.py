@@ -35,7 +35,7 @@ async def build_agent() -> AgentExecutor:
             {
                 "mcp-server": {
                     "url": MCP_SERVER_URL,
-                    "transport": "http",
+                    "transport": "streamable_http",
                 }
             }
         )
@@ -58,7 +58,7 @@ async def build_agent() -> AgentExecutor:
         ]
     )
     agent = create_tool_calling_agent(llm, tools, prompt)
-    return AgentExecutor(agent=agent, tools=tools, verbose=False)
+    return AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=5)
 
 
 async def run_agent(agent: AgentExecutor, user_text: str) -> str:
