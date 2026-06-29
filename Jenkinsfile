@@ -93,36 +93,34 @@ spec:
       }
     }
 
-    stage('Push MCP') {
-      when { expression { env.BUILD_MCP == 'true' } }
-      steps {
-        container('kaniko') {
-          dir('mcp-server') {
-            withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
-              sh """
-                /kaniko/executor \\
-                  --context=. \\
-                  --dockerfile=Dockerfile \\
-                  --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/mcp-server:${IMAGE_TAG}
-              """
-            }
-          }
-        }
+    stage('Push ECR') {
+      when {
+        expression { env.BUILD_MCP == 'true' || env.BUILD_CHATBOT == 'true' }
       }
-    }
-
-    stage('Push Chatbot') {
-      when { expression { env.BUILD_CHATBOT == 'true' } }
       steps {
         container('kaniko') {
-          dir('ia-chatbot') {
-            withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
-              sh """
-                /kaniko/executor \\
-                  --context=. \\
-                  --dockerfile=Dockerfile \\
-                  --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ia-chatbot:${IMAGE_TAG}
-              """
+          withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
+            script {
+              if (env.BUILD_MCP == 'true') {
+                dir('mcp-server') {
+                  sh """
+                    /kaniko/executor \\
+                      --context=. \\
+                      --dockerfile=Dockerfile \\
+                      --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/mcp-server:${IMAGE_TAG}
+                  """
+                }
+              }
+              if (env.BUILD_CHATBOT == 'true') {
+                dir('ia-chatbot') {
+                  sh """
+                    /kaniko/executor \\
+                      --context=. \\
+                      --dockerfile=Dockerfile \\
+                      --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ia-chatbot:${IMAGE_TAG}
+                  """
+                }
+              }
             }
           }
         }
