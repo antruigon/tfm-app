@@ -10,7 +10,12 @@ spec:
     image: python:3.12-slim
     command: ['cat']
     tty: true
-  - name: kaniko
+  - name: kaniko-mcp
+    image: gcr.io/kaniko-project/executor:v1.23.2-debug
+    command: ['sleep']
+    args: ['99d']
+    tty: true
+  - name: kaniko-chatbot
     image: gcr.io/kaniko-project/executor:v1.23.2-debug
     command: ['sleep']
     args: ['99d']
@@ -93,34 +98,36 @@ spec:
       }
     }
 
-    stage('Push ECR') {
-      when {
-        expression { env.BUILD_MCP == 'true' || env.BUILD_CHATBOT == 'true' }
-      }
+    stage('Push MCP') {
+      when { expression { env.BUILD_MCP == 'true' } }
       steps {
-        container('kaniko') {
-          withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
-            script {
-              if (env.BUILD_MCP == 'true') {
-                dir('mcp-server') {
-                  sh """
-                    /kaniko/executor \\
-                      --context=. \\
-                      --dockerfile=Dockerfile \\
-                      --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/mcp-server:${IMAGE_TAG}
-                  """
-                }
-              }
-              if (env.BUILD_CHATBOT == 'true') {
-                dir('ia-chatbot') {
-                  sh """
-                    /kaniko/executor \\
-                      --context=. \\
-                      --dockerfile=Dockerfile \\
-                      --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ia-chatbot:${IMAGE_TAG}
-                  """
-                }
-              }
+        container('kaniko-mcp') {
+          dir('mcp-server') {
+            withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
+              sh """
+                /kaniko/executor \\
+                  --context=. \\
+                  --dockerfile=Dockerfile \\
+                  --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/mcp-server:${IMAGE_TAG}
+              """
+            }
+          }
+        }
+      }
+    }
+
+    stage('Push Chatbot') {
+      when { expression { env.BUILD_CHATBOT == 'true' } }
+      steps {
+        container('kaniko-chatbot') {
+          dir('ia-chatbot') {
+            withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
+              sh """
+                /kaniko/executor \\
+                  --context=. \\
+                  --dockerfile=Dockerfile \\
+                  --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ia-chatbot:${IMAGE_TAG}
+              """
             }
           }
         }
