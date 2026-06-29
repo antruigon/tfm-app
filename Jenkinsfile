@@ -68,65 +68,61 @@ spec:
       }
     }
 
-    stage('CI: Test & Push ECR') {
+    stage('CI: Test') {
       parallel {
         stage('mcp-server') {
           when { expression { env.BUILD_MCP == 'true' } }
-          stages {
-            stage('Test MCP') {
-              steps {
-                container('python') {
-                  dir('mcp-server') {
-                    sh 'pip install -q -r requirements.txt && pytest -q'
-                  }
-                }
-              }
-            }
-            stage('Push MCP') {
-              steps {
-                container('kaniko') {
-                  dir('mcp-server') {
-                    withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
-                      sh """
-                        /kaniko/executor \\
-                          --context=. \\
-                          --dockerfile=Dockerfile \\
-                          --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/mcp-server:${IMAGE_TAG}
-                      """
-                    }
-                  }
-                }
+          steps {
+            container('python') {
+              dir('mcp-server') {
+                sh 'pip install -q -r requirements.txt && pytest -q'
               }
             }
           }
         }
         stage('ia-chatbot') {
           when { expression { env.BUILD_CHATBOT == 'true' } }
-          stages {
-            stage('Test Chatbot') {
-              steps {
-                container('python') {
-                  dir('ia-chatbot') {
-                    sh 'pip install -q -r requirements.txt && pytest -q'
-                  }
-                }
+          steps {
+            container('python') {
+              dir('ia-chatbot') {
+                sh 'pip install -q -r requirements.txt && pytest -q'
               }
             }
-            stage('Push Chatbot') {
-              steps {
-                container('kaniko') {
-                  dir('ia-chatbot') {
-                    withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
-                      sh """
-                        /kaniko/executor \\
-                          --context=. \\
-                          --dockerfile=Dockerfile \\
-                          --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ia-chatbot:${IMAGE_TAG}
-                      """
-                    }
-                  }
-                }
-              }
+          }
+        }
+      }
+    }
+
+    stage('Push MCP') {
+      when { expression { env.BUILD_MCP == 'true' } }
+      steps {
+        container('kaniko') {
+          dir('mcp-server') {
+            withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
+              sh """
+                /kaniko/executor \\
+                  --context=. \\
+                  --dockerfile=Dockerfile \\
+                  --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/mcp-server:${IMAGE_TAG}
+              """
+            }
+          }
+        }
+      }
+    }
+
+    stage('Push Chatbot') {
+      when { expression { env.BUILD_CHATBOT == 'true' } }
+      steps {
+        container('kaniko') {
+          dir('ia-chatbot') {
+            withAWS(region: "${AWS_REGION}", credentials: 'aws-ecr') {
+              sh """
+                /kaniko/executor \\
+                  --context=. \\
+                  --dockerfile=Dockerfile \\
+                  --destination=${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ia-chatbot:${IMAGE_TAG}
+              """
             }
           }
         }
