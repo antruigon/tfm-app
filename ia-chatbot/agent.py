@@ -1,6 +1,7 @@
 import logging
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
@@ -8,8 +9,12 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 
 from config import GROQ_API_KEY, GROQ_BASE_URL, GROQ_MODEL, MCP_SERVER_URL
+from logging_config import APP_LOGGER
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from app import SlackContext
+
+logger = logging.getLogger(APP_LOGGER)
 
 SYSTEM_PROMPT = (
     "Eres un asistente DevOps del TFM. Responde en español, breve y útil. "
@@ -49,9 +54,10 @@ async def build_agent() -> ChatbotState:
         tools = await client.get_tools()
         if tools:
             mcp_tools = tools
-            logger.info("Cargadas %s herramientas MCP", len(mcp_tools))
+            tool_names = ", ".join(t.name for t in mcp_tools)
+            logger.info("[MCP] Herramientas disponibles: %s", tool_names)
     except Exception as exc:
-        logger.warning("MCP no disponible: %s", exc)
+        logger.warning("[MCP] No disponible al arrancar: %s", exc)
 
     return ChatbotState(llm=llm, mcp_tools=mcp_tools)
 
@@ -86,40 +92,66 @@ def _wants_echo(user_text: str) -> bool:
     return "echo" in lowered or lowered.startswith("repite")
 
 
-async def _invoke_mcp_tool(state: ChatbotState, user_text: str) -> str | None:
+async def _invoke_mcp_tool(
+    state: ChatbotState, user_text: str, slack_ctx: "SlackContext | None" = None
+) -> tuple[str, str] | None:
+    """Devuelve (nombre_herramienta, resultado) o None si no aplica MCP."""
     if not state.mcp_tools:
         return None
 
     tools = _tools_by_name(state.mcp_tools)
+    ctx_label = slack_ctx.summary() if slack_ctx else "sin-contexto-slack"
 
     if _wants_ping(user_text) and "ping" in tools:
-        result = await tools["ping"].ainvoke({})
-        return str(result)
+        logger.info("[MCP] Invocando herramienta 'ping' | %s", ctx_label)
+        result = str(await tools["ping"].ainvoke({}))
+        logger.info("[MCP] Resultado 'ping' | %s | respuesta: %r", ctx_label, result)
+        return "ping", result
 
     if _wants_echo(user_text) and "echo" in tools:
         message = _extract_echo_message(user_text) or user_text
-        result = await tools["echo"].ainvoke({"message": message})
-        return str(result)
+        logger.info(
+            "[MCP] Invocando herramienta 'echo' | %s | argumento message=%r",
+            ctx_label,
+            message,
+        )
+        result = str(await tools["echo"].ainvoke({"message": message}))
+        logger.info("[MCP] Resultado 'echo' | %s | respuesta: %r", ctx_label, result)
+        return "echo", result
 
     return None
 
 
-async def _llm_reply(state: ChatbotState, user_text: str) -> str:
+async def _llm_reply(
+    state: ChatbotState, user_text: str, slack_ctx: "SlackContext | None" = None
+) -> str:
+    ctx_label = slack_ctx.summary() if slack_ctx else "sin-contexto-slack"
+    logger.info("[LLM] Generando respuesta | %s | modelo=%s", ctx_label, GROQ_MODEL)
+
     response = await state.llm.ainvoke(
         [
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=user_text),
         ]
     )
-    return str(response.content)
+    content = str(response.content)
+    preview = content if len(content) <= 200 else f"{content[:200]}..."
+    logger.info("[LLM] Respuesta generada | %s | texto: %r", ctx_label, preview)
+    return content
 
 
-async def run_agent(state: ChatbotState, user_text: str) -> str:
+async def run_agent(
+    state: ChatbotState,
+    user_text: str,
+    slack_ctx: "SlackContext | None" = None,
+) -> str:
     try:
-        mcp_result = await _invoke_mcp_tool(state, user_text)
-        if mcp_result is not None:
-            return mcp_result
-        return await _llm_reply(state, user_text)
-    except Exception as exc:
-        logger.exception("Error en agente: %s", exc)
+        mcp_out = await _invoke_mcp_tool(state, user_text, slack_ctx)
+        if mcp_out is not None:
+            _tool_name, result = mcp_out
+            return result
+        return await _llm_reply(state, user_text, slack_ctx)
+    except Exception:
+        ctx_label = slack_ctx.summary() if slack_ctx else "sin-contexto-slack"
+        logger.exception("[AGENTE] Error | %s", ctx_label)
         return "No he podido procesar tu mensaje. Inténtalo de nuevo en unos segundos."
