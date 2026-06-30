@@ -27,6 +27,15 @@ spec:
 """
     }
   }
+
+  parameters {
+    choice(
+      name: 'IMAGES_TO_BUILD',
+      choices: ['auto', 'all', 'mcp-server', 'ia-chatbot'],
+      description: 'auto: webhook → solo servicios con cambios. all/mcp-server/ia-chatbot: forzar qué construir (build manual).'
+    )
+  }
+
   environment {
     AWS_REGION = 'eu-north-1'
     AWS_ACCOUNT = '565083285597'
@@ -34,6 +43,7 @@ spec:
     CHARTS_REPO = 'https://github.com/antruigon/tfm-charts.git'
     CHARTS_BRANCH = 'master'
   }
+
   stages {
     stage('Checkout') {
       steps { checkout scm }
@@ -42,33 +52,44 @@ spec:
     stage('Detect changes') {
       steps {
         script {
-          def changes = sh(
-            script: '''
-              set +e
-              git diff --name-only HEAD~1 HEAD 2>/dev/null
-              if [ $? -ne 0 ]; then
-                git show --name-only --pretty=format: HEAD
-              fi
-            ''',
-            returnStdout: true
-          ).trim()
+          def manual = currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').size() > 0
+          def choice = params.IMAGES_TO_BUILD ?: 'auto'
 
-          env.BUILD_MCP = (
-            changes.contains('mcp-server/') ||
-            changes.contains('Jenkinsfile')
-          ) ? 'true' : 'false'
-
-          env.BUILD_CHATBOT = (
-            changes.contains('ia-chatbot/') ||
-            changes.contains('Jenkinsfile')
-          ) ? 'true' : 'false'
-
-          if (env.BUILD_MCP == 'false' && env.BUILD_CHATBOT == 'false') {
-            env.BUILD_MCP = 'true'
-            env.BUILD_CHATBOT = 'true'
+          // Build manual (o rebuild): ambas imágenes salvo que el usuario elija otra cosa en el parámetro
+          if (manual && choice == 'auto') {
+            choice = 'all'
           }
 
-          echo "BUILD_MCP=${env.BUILD_MCP} BUILD_CHATBOT=${env.BUILD_CHATBOT} IMAGE_TAG=${env.IMAGE_TAG}"
+          if (choice == 'all') {
+            env.BUILD_MCP = 'true'
+            env.BUILD_CHATBOT = 'true'
+          } else if (choice == 'mcp-server') {
+            env.BUILD_MCP = 'true'
+            env.BUILD_CHATBOT = 'false'
+          } else if (choice == 'ia-chatbot') {
+            env.BUILD_MCP = 'false'
+            env.BUILD_CHATBOT = 'true'
+          } else {
+            // auto + disparo por webhook / push: solo lo que cambió en el commit
+            def changes = collectChangedPaths()
+
+            env.BUILD_MCP = (
+              changes.contains('mcp-server/') ||
+              changes.contains('Jenkinsfile')
+            ) ? 'true' : 'false'
+
+            env.BUILD_CHATBOT = (
+              changes.contains('ia-chatbot/') ||
+              changes.contains('Jenkinsfile')
+            ) ? 'true' : 'false'
+
+            if (env.BUILD_MCP == 'false' && env.BUILD_CHATBOT == 'false') {
+              env.BUILD_MCP = 'true'
+              env.BUILD_CHATBOT = 'true'
+            }
+          }
+
+          echo "manual=${manual} IMAGES_TO_BUILD=${choice} BUILD_MCP=${env.BUILD_MCP} BUILD_CHATBOT=${env.BUILD_CHATBOT} IMAGE_TAG=${env.IMAGE_TAG}"
         }
       }
     }
@@ -180,4 +201,31 @@ spec:
       echo "Pipeline OK — imagen(es) :${IMAGE_TAG} en ECR; Argo CD sincronizará tfm-charts"
     }
   }
+}
+
+def collectChangedPaths() {
+  def paths = [] as Set
+
+  currentBuild.changeSets.each { changeSet ->
+    changeSet.each { entry ->
+      entry.affectedFiles.each { file ->
+        paths << file.path
+      }
+    }
+  }
+
+  if (!paths.isEmpty()) {
+    return paths.join('\n')
+  }
+
+  return sh(
+    script: '''
+      set +e
+      git diff --name-only HEAD~1 HEAD 2>/dev/null
+      if [ $? -ne 0 ]; then
+        git show --name-only --pretty=format: HEAD
+      fi
+    ''',
+    returnStdout: true
+  ).trim()
 }
