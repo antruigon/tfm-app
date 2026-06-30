@@ -12,7 +12,11 @@ from utils import clean_mention
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = AsyncApp(token=SLACK_BOT_TOKEN)
+app = AsyncApp(
+    token=SLACK_BOT_TOKEN,
+    # Socket Mode: eventos por WebSocket, no HTTP → no hace falta signing secret
+    request_verification_enabled=False,
+)
 _agent = None
 
 
